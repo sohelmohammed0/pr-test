@@ -1,0 +1,145 @@
+name: PR Promotion Pipeline
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - dev
+      - test
+      - prod
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+
+  # --------------------------------
+  # 1️⃣ feature → dev (Prettier Auto Fix)
+  # --------------------------------
+  prettier-check:
+    if: github.base_ref == 'dev' && startsWith(github.head_ref, 'feature/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run Prettier Auto Fix
+        run: |
+          npm run format:fix
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add .
+          git reset .github/ || true
+
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: auto-fix Prettier formatting"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
+
+  # --------------------------------
+  # 2️⃣ dev → test (Lint + Lint-Staged + Coverage)
+  # --------------------------------
+  quality-check-dev-to-test:
+    if: github.base_ref == 'test' && github.head_ref == 'dev'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Run lint-staged against entire repo in CI
+      - name: Run Lint-Staged
+        run: npx lint-staged --no-stash || true
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run Tests with Coverage
+        run: npm test -- --coverage --coverageReporters=json-summary
+
+      - name: Enforce 80% Coverage
+        run: |
+          COVERAGE=$(node -e "
+          const fs = require('fs');
+          const data = JSON.parse(fs.readFileSync('./coverage/coverage-summary.json'));
+          console.log(data.total.lines.pct);
+          ")
+
+          echo "Coverage: $COVERAGE%"
+
+          if [ "$(printf "%.0f" $COVERAGE)" -lt 80 ]; then
+            echo "❌ Coverage below 80%"
+            exit 1
+          fi
+
+  # --------------------------------
+  # 3️⃣ test → prod (Quality Gate + Auto Merge)
+  # --------------------------------
+  quality-check-test-to-prod:
+    if: github.base_ref == 'prod' && github.head_ref == 'test'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run Tests with Coverage
+        run: npm test -- --coverage --coverageReporters=json-summary
+
+      - name: Enforce 80% Coverage
+        run: |
+          COVERAGE=$(node -e "
+          const fs = require('fs');
+          const data = JSON.parse(fs.readFileSync('./coverage/coverage-summary.json'));
+          console.log(data.total.lines.pct);
+          ")
+
+          echo "Coverage: $COVERAGE%"
+
+          if [ "$(printf "%.0f" $COVERAGE)" -lt 80 ]; then
+            echo "❌ Coverage below 80%"
+            exit 1
+          fi
+
+  auto-merge-prod:
+    needs: quality-check-test-to-prod
+    if: github.base_ref == 'prod' && github.head_ref == 'test'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Enable Auto Merge
+        run: |
+          gh pr merge ${{ github.event.pull_request.number }} \
+            --squash \
+            --auto \
+            --repo ${{ github.repository }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
