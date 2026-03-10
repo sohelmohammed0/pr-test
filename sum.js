@@ -3,4 +3,4 @@ function sum(a, b) {
 }
 module.exports = sum;
 
-const   test =    "bad formatting"
+const test = "bad formatting";

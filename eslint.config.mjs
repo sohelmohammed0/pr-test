@@ -1,4 +1,4 @@
-import js from '@eslint/js';
+import js from "@eslint/js";
 
 export default [
   js.configs.recommended,
@@ -7,19 +7,19 @@ export default [
   {
     languageOptions: {
       globals: {
-        module: 'readonly',
-        require: 'readonly',
+        module: "readonly",
+        require: "readonly",
       },
     },
   },
 
   // Jest environment (only for test files)
   {
-    files: ['**/*.test.js'],
+    files: ["**/*.test.js"],
     languageOptions: {
       globals: {
-        test: 'readonly',
-        expect: 'readonly',
+        test: "readonly",
+        expect: "readonly",
       },
     },
   },
